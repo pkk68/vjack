@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>vJackpot</title>
+    <!-- https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@2.0.0/dist/tf.min.js -->
+    <!-- https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            margin-top: 50px;
+        }
+        #output {
+            margin-top: 20px;
+            font-size: 1.2em;
+        }
+        select {
+            margin-bottom: 15px;
+            padding: 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1>vJack for Jackpot</h1>
+    <p>Upload a CSV file with past Jackpots (6 numbers per row, e.g., 3,12,25,34,47,45)</p>
+    <label for="maxNumber">Max number: </label>
+    <select id="maxNumber" onchange="resetFileInput()">
+        <option value="45">Mega 6/45</option>
+        <option value="55" selected>Power 6/55</option>
+    </select>
+    <br>
+    <input type="file" id="csvFile" accept=".csv" onchange="securityCheck()">
+    <div id="output"></div>
+
+    <script src="vjack.js"></script>
+</body>
+</html>
