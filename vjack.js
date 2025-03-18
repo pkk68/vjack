@@ -1,111 +1,151 @@
 //
 // vJackpot for Vietlott ball
 // Created for fun 
-// v.20250317
+// v.20250318
 // Default latest big data or user input source
 // Log storage, security check and mega/power
-// Up to 10000 samples/lines
+// Update handle large CSV files (e.g., >10,000 rows)
 //
 const MINJACKPOT = 2;
 const TOTALNUM = 6;
 const MAXPOWER = 55;
 const MAXMEGA = 45;
 const MINPOWER = 1;
+const TOTALROW = 1040;
 
 let logs = [];
-let startTime;
-let requestCount = 0;
+let startTime;             // start time
+let requestCount = 0;      // total number of securityCheck call/request
 let lastResetTime = performance.now();
-const TIME_WINDOW = 1000;
-const REQUEST_THRESHOLD = 5;
-const SAMPLE_SIZE = 1000; // Sample 1000 rows for training
-const CHUNK_SIZE = 2000;  // Process 2000 rows per chunk
+const TIME_WINDOW = 1000;  // 1 second window to measure concurrent req
+const REQUEST_THRESHOLD = 5;    // Max 5 requests before challenge
 
-function updateOutput(message) {
-    clearTimeout(updateOutput.timeout);
-    updateOutput.timeout = setTimeout(() => {
-        document.getElementById('output').innerText = message;
-    }, 100);
-}
-updateOutput.timeout = null;
-
+// Efficient logging with optional batching for large datasets
 function logStep(message) {
     const timestamp = new Date().toISOString();
     logs.push(`${timestamp}: ${message}`);
 }
 
+// Toggle UI elements with minimal DOM manipulation
 function toggleCsvInput() {
     const csvType = document.querySelector('input[name="csvType"]:checked').value;
     const fileInput = document.getElementById('csvFile');
     const maxNumberSelect = document.getElementById('maxNumber');
-    updateOutput('');
+    const outputDiv = document.getElementById('output');
+
     fileInput.style.display = csvType === "input" ? "block" : "none";
     maxNumberSelect.style.display = csvType === "predefined" ? "block" : "none";
     fileInput.value = '';
     maxNumberSelect.value = '';
+    outputDiv.innerText = '';
     logStep(`CSV type changed to ${csvType}, resetting inputs`);
 }
 
 function clearOutput() {
-    updateOutput('');
-    logStep("Output cleared due to max number or file selection change");
+    const outputDiv = document.getElementById('output');
+    outputDiv.innerText = '';
+    logStep("Output cleared due to selection change");
 }
 
-async function securityCheck() {
+// Security check with lightweight bot detection
+function securityCheck() {
+    const outputDiv = document.getElementById('output');
     const maxNumberSelect = document.getElementById('maxNumber');
     const csvType = document.querySelector('input[name="csvType"]:checked').value;
     const maxNum = maxNumberSelect.value;
 
     if (csvType === "predefined" && (!maxNum || (maxNum !== "45" && maxNum !== "55"))) {
-        updateOutput("Please select a valid max number (Mega or Power) for predefined CSV.");
-        logStep("Invalid maxNum for predefined data: " + maxNum);
+        outputDiv.innerText = "Please select a valid max number (Mega or Power) for predefined CSV.";
+        logStep(`Invalid maxNum for predefined data: ${maxNum}`);
         return;
     }
 
     const currentTime = performance.now();
+	
+	// Reset counter if time window has elapsed
     if (currentTime - lastResetTime > TIME_WINDOW) {
         requestCount = 0;
         lastResetTime = currentTime;
+        logStep("Request counter reset due to time window expiration");
     }
+
+    // Increment request count
     requestCount++;
     logStep(`Request count incremented to ${requestCount}`);
-
+    
+	// Check if threshold exceeded
     if (requestCount > REQUEST_THRESHOLD) {
-        updateOutput("Performing security check...");
-        const start = performance.now();
-        await new Promise(resolve => setTimeout(resolve, 100));
-        const elapsed = performance.now() - start;
-        if (elapsed > 500 || !navigator.userAgent.includes('mozilla')) {
-            updateOutput("Security check failed. Access denied.");
-            logStep("Security check failed: Potential bot detected");
+        outputDiv.innerText = "Performing security check due to high request rate...";
+        logStep("High request rate detected, initiating security challenge");
+
+        const challengeStart = performance.now();
+        const challengeString = `${navigator.userAgent}${Math.random()}`;
+        let hash = 0;
+
+        // Computational challenge
+        // Reduced iterations for faster bot check
+        for (let i = 0; i < 500000; i++) {
+            hash = ((hash << 5) - hash + challengeString.charCodeAt(i % challengeString.length)) | 0;
+        }
+
+        const challengeEnd = performance.now();
+        const elapsed = challengeEnd - challengeStart;
+
+        // Fingerprinting and validation
+        const userAgent = navigator.userAgent.toLowerCase();
+        const screenWidth = window.screen.width;
+        const screenHeight = window.screen.height;
+        const isBotLike = elapsed < 20 || elapsed > 3000 || 
+		                  !userAgent.includes('mozilla') || 
+						  screenWidth < 300 || screenHeight < 300;
+
+        if (isBotLike) {
+            outputDiv.innerText = "Security check failed. Access denied.";
+            logStep("Security check failed: Potential bot or DDoS detected");
             downloadLogs(null);
             return;
         }
-        logStep("Security check passed");
+
+        logStep("Security challenge passed");
+        outputDiv.innerText = "Security check passed. Starting prediction...";
+    } else {
+        logStep("Request count below threshold, skipping security challenge");
+        outputDiv.innerText = "Starting prediction...";
     }
-    updateOutput("Starting prediction...");
-    setTimeout(() => predictNumbers(maxNum, csvType), 500);
+
+    setTimeout(() => predictNumbers(maxNum, csvType), 500); // Reduced delay
 }
 
+// Will be trigger after securityCheck()
+// If checks pass, logs success and proceeds now
+// othervise ff fails, logs failure, displays “Access denied” and stops execution.
 async function predictNumbers(maxNum, csvType) {
+    const outputDiv = document.getElementById('output');
+	
+	// Reset logs
     logs = [];
-    startTime = performance.now();
-    updateOutput("Starting prediction...");
-    logStep("Starting prediction process with max number: " + (maxNum || "from input") + ", type: " + csvType);
+    startTime = performance.now();    // Collect timing
+    logStep(`Starting prediction process with max number: ${maxNum || "from input"}, type: ${csvType}`);
 
-    let effectiveMaxNum, dataStream;
+    let csvData;
+    let effectiveMaxNum;
+
     if (csvType === "predefined") {
         const csvFile = maxNum === "45" ? "mega.csv" : "power.csv";
         const fetchUrl = `./${csvFile}`;
-        updateOutput(`Loading ${csvFile}...`);
+        outputDiv.innerText = `Loading ${csvFile}...`;
+        logStep(`Attempting to fetch predefined CSV file: ${fetchUrl}`);
+
         try {
             const response = await fetch(fetchUrl);
-            if (!response.ok) throw new Error(`HTTP error ${response.status}`);
-            dataStream = response.body; // Use ReadableStream
+            logStep(`Fetch response status: ${response.status} ${response.statusText}`);
+            if (!response.ok) throw new Error(`HTTP error ${response.status}: ${response.statusText}`);
+            csvData = await response.text();
+            logStep(`Predefined file loaded successfully, content length: ${csvData.length}`);
             effectiveMaxNum = parseInt(maxNum);
         } catch (error) {
-            updateOutput(`Error: Could not load ${csvFile}. (${error.message})`);
             logStep(`Error fetching ${fetchUrl}: ${error.message}`);
+            outputDiv.innerText = `Error: Could not load ${csvFile}. Ensure it exists and is accessible (Details: ${error.message}).`;
             downloadLogs(effectiveMaxNum);
             return;
         }
@@ -113,139 +153,204 @@ async function predictNumbers(maxNum, csvType) {
         const fileInput = document.getElementById('csvFile');
         const file = fileInput.files[0];
         if (!file) {
-            updateOutput("Please upload a CSV file.");
-            logStep("No file uploaded");
+            logStep("No file uploaded for input type");
+            outputDiv.innerText = "Please upload a CSV file.";
             downloadLogs(effectiveMaxNum);
             return;
         }
-        dataStream = file.stream();
-        effectiveMaxNum = await determineMaxNumFromStream(file);
+
+        logStep(`File selected: ${file.name}`);
+        outputDiv.innerText = "Loading file...";
+
+        // Stream-based CSV parsing for large files
+        csvData = await streamParseCSV(file);
+        logStep(`Input file ${file.name} loaded successfully`);
+
+        const maxInData = findMaxInData(csvData);
+        effectiveMaxNum = maxInData <= MAXMEGA ? MAXMEGA : MAXPOWER;
+        logStep(`Determined effective max number from input CSV: ${effectiveMaxNum}`);
     }
 
-    const { sampledData, totalRows } = await streamAndSampleCSV(dataStream, effectiveMaxNum);
-    if (totalRows < MINJACKPOT) {
-        updateOutput("Error: CSV must contain at least 2 rows to learn");
-        logStep("Error: Not enough data");
-        downloadLogs(effectiveMaxNum);
-        return;
-    }
+    logStep(`Validating CSV content against max number: ${effectiveMaxNum}`);
+    if (!validateCSV(csvData, effectiveMaxNum)) return;
 
-    const predictedNumbers = await processSampledData(sampledData, effectiveMaxNum, totalRows);
+    outputDiv.innerText = "Processing data and training model...";
+    logStep("CSV data read, beginning processing");
+    const predictedNumbers = await processCSVandPredict(csvData, effectiveMaxNum);
+    logStep("Prediction completed");
+
     const elapsedTime = ((performance.now() - startTime) / 1000).toFixed(2);
-    updateOutput(`Predicted Numbers (1-${effectiveMaxNum}): ${predictedNumbers.join(', ')}\nElapsed Time: ${elapsedTime} second(s)`);
     logStep(`Elapsed Time: ${elapsedTime} second(s)`);
+    outputDiv.innerText = `Potential Jackpot (1-${effectiveMaxNum}): ${predictedNumbers.join(', ')}\nElapsed Time: ${elapsedTime} second(s)`;
     downloadLogs(effectiveMaxNum);
 }
 
-async function determineMaxNumFromStream(file) {
-    return new Promise((resolve) => {
-        let maxNum = 0;
-        Papa.parse(file, {
-            step: (result) => {
-                const row = result.data.map(Number);
-                maxNum = Math.max(maxNum, ...row);
-            },
-            complete: () => resolve(maxNum <= 45 ? MAXMEGA : MAXPOWER),
-            preview: 100 // Check first 100 rows for efficiency
-        });
-    });
-}
+// Stream-based CSV parsing for large files
+// process the CSV file in chunks using the stream.
+async function streamParseCSV(file) {
+    return new Promise((resolve, reject) => {
+        const chunks = [];
+        const reader = file.stream().getReader();
+        const decoder = new TextDecoder();
 
-// Stream and sample CSV data
-async function streamAndSampleCSV(stream, maxNum) {
-    return new Promise((resolve) => {
-        let totalRows = 0;
-        const sampledData = [];
-        const reservoir = []; // Reservoir sampling
-
-        Papa.parse(stream, {
-            worker: true, // Offload to worker
-            chunkSize: CHUNK_SIZE,
-            step: (result) => {
-                totalRows++;
-                const row = result.data.map(Number);
-                if (row.length !== TOTALNUM || row.some(n => isNaN(n) || n < 1 || n > maxNum)) return;
-
-                if (reservoir.length < SAMPLE_SIZE) {
-                    reservoir.push(row.map(n => n / maxNum));
-                } else {
-                    const r = Math.floor(Math.random() * totalRows);
-                    if (r < SAMPLE_SIZE) reservoir[r] = row.map(n => n / maxNum);
-                }
-            },
-            complete: () => {
-                logStep(`Processed ${totalRows} rows, sampled ${reservoir.length}`);
-                resolve({ sampledData: reservoir, totalRows });
-            },
-            error: (err) => {
-                logStep(`Stream parsing error: ${err.message}`);
-                resolve({ sampledData: [], totalRows: 0 });
+        reader.read().then(function processChunk({ done, value }) {
+            if (done) {
+                const csvData = chunks.join('').trim().split('\n').filter(row => row.trim() !== '');
+                resolve(csvData);
+                return;
             }
-        });
+            chunks.push(decoder.decode(value));
+            reader.read().then(processChunk).catch(reject);
+        }).catch(reject);
     });
 }
 
-async function processSampledData(sampledData, maxNum, totalRows) {
-    updateOutput(`Training model on ${sampledData.length} sampled rows of ${totalRows} total...`);
-    logStep(`Training on ${sampledData.length} sampled rows`);
+// Find max value in data efficiently
+function findMaxInData(csvData) {
+    let max = -Infinity;
+    for (const row of csvData) {
+        const nums = row.split(',').map(num => parseInt(num.trim(), 10));
+        const rowMax = Math.max(...nums);
+        if (rowMax > max) max = rowMax;
+    }
+    return max;
+}
 
-    await tf.setBackend('webgl');
-    logStep("Using WebGL backend");
+// Validate CSV with early exit
+function validateCSV(csvData, effectiveMaxNum) {
+    const outputDiv = document.getElementById('output');
+    if (csvData.length < MINJACKPOT) {
+        logStep(`Error: Not enough data (need at least ${MINJACKPOT} rows to learn)`);
+        outputDiv.innerText = `Error: CSV must contain at least ${MINJACKPOT} rows to learn`;
+        downloadLogs(effectiveMaxNum);
+        return false;
+    }
 
-    const inputData = sampledData.slice(0, -1);
-    const outputData = sampledData.slice(1);
-    const inputTensor = tf.tensor2d(inputData);
-    const outputTensor = tf.tensor2d(outputData);
+    for (let i = 0; i < csvData.length; i++) {
+        const row = csvData[i].split(',').map(num => parseInt(num.trim(), 10));
+        logStep(`Info: row length ${row.length}`);
+        if (row.length !== TOTALNUM) {
+            logStep(`Error: Row ${i + 1} does not contain exactly ${TOTALNUM} numbers: ${row.join(', ')}`);
+            outputDiv.innerText = `Error: Row ${i + 1} must contain exactly ${TOTALNUM} numbers.`;
+            downloadLogs(effectiveMaxNum);
+            return false;
+        }
+        const invalidNum = row.find(num => isNaN(num) || num < MINPOWER || num > effectiveMaxNum);
+        if (invalidNum !== undefined) {
+            logStep(`Error: Row ${i + 1} contains invalid number ${invalidNum} (max ${effectiveMaxNum})`);
+            outputDiv.innerText = `Error: Number ${invalidNum} in row ${i + 1} exceeds max ${effectiveMaxNum} or is invalid.`;
+            downloadLogs(effectiveMaxNum);
+            return false;
+        }
+    }
+    logStep("CSV validation passed");
+    return true;
+}
 
+// Optimized model training and prediction
+async function processCSVandPredict(csvData, maxNum) {
+    logStep("Preparing training data");
+    const data = csvData.map(row => row.split(',').map(num => parseInt(num.trim(), 10)));
+
+    // Use a sliding window for large datasets
+	// For large datasets, limited training data to a window of the last rows
+	// TOTALROW
+    const windowSize = Math.min(TOTALROW, data.length - 1); // Adjustable window
+    const startIdx = Math.max(0, data.length - windowSize - 1);
+    const xs = data.slice(startIdx, -1);
+    const ys = data.slice(startIdx + 1);
+    const normalizedXs = xs.map(row => row.map(num => num / maxNum));
+    const normalizedYs = ys.map(row => row.map(num => num / maxNum));
+    logStep(`Training set: ${xs.length} input rows, ${ys.length} output rows`);
+
+    logStep("Converting data to Tensor");
+    const inputTensor = tf.tensor2d(normalizedXs);
+    const outputTensor = tf.tensor2d(normalizedYs);
+
+    logStep("Defining network model");
+	// Tensor Flow DNN 64-32-6 layers
     const model = tf.sequential();
-    model.add(tf.layers.dense({ units: 32, activation: 'relu', inputShape: [6] })); // Simplified model
+    model.add(tf.layers.dense({ units: 64, activation: 'relu', inputShape: [6] }));
+    model.add(tf.layers.dense({ units: 32, activation: 'relu' }));
     model.add(tf.layers.dense({ units: 6, activation: 'linear' }));
-
+	
+	// https://viblo.asia/p/danh-gia-model-trong-machine-learing-RnB5pAq7KPG
+	// https://viblo.asia/p/optimizer-hieu-sau-ve-cac-thuat-toan-toi-uu-gdsgdadam-Qbq5QQ9E5D8
+	//     Adam = Momentum + RMSprop
+	//     https://viblo.asia/p/thuat-toan-toi-uu-adam-aWj53k8Q56m	
     model.compile({
-        optimizer: tf.train.adam(0.001),
+        optimizer: tf.train.adam(0.001), // Tuned learning rate for faster
         loss: 'meanSquaredError',
         metrics: ['mae']
     });
+    logStep("Model compiled with Adam optimizer and MSE loss");
 
+    logStep("Starting model training");
+	// Experiment:
+	// Epoch 5 - Loss: 0.0265, MAE: 0.1301, 1000 rows, 3.53 second(s)
+    // Epoch 10 - Loss: 0.0254, MAE: 0.1277, 517 rows, 8.30 second(s)
+    // Epoch 150 - Loss: 0.0213, MAE: 0.1170, 1000 rows, 36.91 second(s)
+    // Epoch 150 - Loss: 0.0214, MAE: 0.1175, 1000 rows, 34.91 second(s)
+	// Epoch 150 - Loss: 0.0213, MAE: 0.1170, 1000 rows, 49.76 second(s)
+	// Epoch 150 - Loss: 0.0217, MAE: 0.1183, 1039 rows, 36.07 second(s)
     await model.fit(inputTensor, outputTensor, {
-        epochs: 50,
-        batchSize: 32,
+        //epochs: Math.min(150, Math.ceil(5000 / xs.length)), // Dynamic epochs, default entire 150 training set per sample
+        //batchSize: 1,
+		epochs: 150,
+		batchSize: Math.min(32, xs.length),     // Larger batch size for efficiency
         shuffle: true,
         verbose: 0,
         callbacks: {
-            onEpochEnd: async (epoch, logs) => {
-                logStep(`Epoch ${epoch + 1}/50 - Loss: ${logs.loss.toFixed(4)}`);
-                await tf.nextFrame();
+            onEpochEnd: (epoch, logs) => {
+                logStep(`Epoch ${epoch + 1} - Loss: ${logs.loss.toFixed(4)}, MAE: ${logs.mae.toFixed(4)}`);
             }
         }
     });
+    logStep("Model training completed");
 
-    const lastRow = sampledData[sampledData.length - 1];
-    const predictionTensor = model.predict(tf.tensor2d([lastRow], [1, TOTALNUM]));
+    logStep("Predicting with last Jackpots");
+    const lastRow = data[data.length - 1];
+    const normalizedLastRow = lastRow.map(num => num / maxNum);
+    const predictionTensor = model.predict(tf.tensor2d([normalizedLastRow], [1, TOTALNUM]));
     const prediction = predictionTensor.dataSync();
-    const predictedNumbers = generateUniqueNumbers(prediction, maxNum);
+    logStep(`Raw prediction: ${Array.from(prediction).join(', ')}`);
 
-    tf.dispose([inputTensor, outputTensor, predictionTensor]);
+    logStep("Generating unique numbers from prediction");
+    const predictedNumbers = generateUniqueNumbers(prediction, maxNum);
+    logStep(`Final predicted numbers: ${predictedNumbers.join(', ')}`);
+
+    tf.dispose([inputTensor, outputTensor, predictionTensor, model]);
     logStep("Teardown memory");
+
     return predictedNumbers;
 }
 
+// Optimized unique number generation
+// pre-filling with top predictions and using random sampling only for remaining slots
 function generateUniqueNumbers(prediction, maxNum) {
     const numbers = new Set();
-    prediction.forEach(prob => {
-        const num = Math.max(1, Math.min(maxNum, Math.round(prob * maxNum)));
-        numbers.add(num);
-    });
+    const sortedPred = Array.from(prediction).sort((a, b) => b - a);
 
-    while (numbers.size < TOTALNUM) {
-        const num = Math.floor(Math.random() * maxNum) + 1; // Fallback to random
+    // Pre-fill with top predictions
+    for (let i = 0; i < Math.min(TOTALNUM, sortedPred.length); i++) {
+        const num = Math.max(MINPOWER, Math.min(maxNum, Math.round(sortedPred[i] * maxNum)));
         numbers.add(num);
     }
 
-    return Array.from(numbers).slice(0, TOTALNUM).sort((a, b) => a - b);
+    // Efficiently fill remaining slots
+    while (numbers.size < TOTALNUM) {
+        const num = Math.floor(Math.random() * maxNum) + MINPOWER;
+        numbers.add(num);
+		logStep(`Added sampled number ${num} to ensure 6 unique numbers`);
+    }
+
+    const result = Array.from(numbers).sort((a, b) => a - b);
+    logStep(`Final sorted numbers: ${result.join(', ')}`);
+    return result;
 }
 
 function downloadLogs(effectiveMaxNum) {
+    logStep("Generating log file for download");
     const prefix = effectiveMaxNum === MAXMEGA ? "mega_" : effectiveMaxNum === MAXPOWER ? "power_" : "unknown_";
     const logContent = logs.join('\n');
     const blob = new Blob([logContent], { type: 'text/plain' });
@@ -257,6 +362,7 @@ function downloadLogs(effectiveMaxNum) {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+    logStep(`Log file download triggered with prefix: ${prefix}`);
 }
 
 toggleCsvInput();
