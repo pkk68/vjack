@@ -5,7 +5,10 @@
 // Default latest big data or user input source
 // Log storage, security check and mega/power
 // Update handle large CSV files (e.g., >10,000 rows)
+//     Optimize Convergence: Achieve high accuracy faster without excessive epochs.
+//     Handle Variability: Account for small (e.g., 3 rows) to large (e.g., 1000+ rows) datasets.
 //
+const VERSION = 20250318;
 const MINJACKPOT = 2;
 const TOTALNUM = 6;
 const MAXPOWER = 55;
@@ -62,7 +65,7 @@ function securityCheck() {
 
     const currentTime = performance.now();
 	
-	// Reset counter if time window has elapsed
+    // Reset counter if time window has elapsed
     if (currentTime - lastResetTime > TIME_WINDOW) {
         requestCount = 0;
         lastResetTime = currentTime;
@@ -73,7 +76,7 @@ function securityCheck() {
     requestCount++;
     logStep(`Request count incremented to ${requestCount}`);
     
-	// Check if threshold exceeded
+    // Check if threshold exceeded
     if (requestCount > REQUEST_THRESHOLD) {
         outputDiv.innerText = "Performing security check due to high request rate...";
         logStep("High request rate detected, initiating security challenge");
@@ -122,7 +125,7 @@ function securityCheck() {
 async function predictNumbers(maxNum, csvType) {
     const outputDiv = document.getElementById('output');
 	
-	// Reset logs
+    // Reset logs
     logs = [];
     startTime = performance.now();    // Collect timing
     logStep(`Starting prediction process with max number: ${maxNum || "from input"}, type: ${csvType}`);
@@ -137,7 +140,7 @@ async function predictNumbers(maxNum, csvType) {
         logStep(`Attempting to fetch predefined CSV file: ${fetchUrl}`);
 
         try {
-            const response = await fetch(fetchUrl);
+            const response = await fetch(fetchUrl, { cache: 'no-store' }); // Avoid caching issues
             logStep(`Fetch response status: ${response.status} ${response.statusText}`);
             if (!response.ok) throw new Error(`HTTP error ${response.status}: ${response.statusText}`);
             csvData = await response.text();
@@ -145,7 +148,11 @@ async function predictNumbers(maxNum, csvType) {
             effectiveMaxNum = parseInt(maxNum);
         } catch (error) {
             logStep(`Error fetching ${fetchUrl}: ${error.message}`);
-            outputDiv.innerText = `Error: Could not load ${csvFile}. Ensure it exists and is accessible (Details: ${error.message}).`;
+            //outputDiv.innerText = `Error: Could not load ${csvFile}. Ensure it exists in the same directory as index.html and is accessible via the server (Details: ${error.message}).`;
+	    outputDiv.innerText = (
+                `Error: Could not load ${csvFile}. Ensure it exists in the same directory ` +
+                `as index.html and is accessible via the server (Details: ${error.message}).`
+                );
             downloadLogs(effectiveMaxNum);
             return;
         }
@@ -181,7 +188,10 @@ async function predictNumbers(maxNum, csvType) {
 
     const elapsedTime = ((performance.now() - startTime) / 1000).toFixed(2);
     logStep(`Elapsed Time: ${elapsedTime} second(s)`);
-    outputDiv.innerText = `Potential Jackpot (1-${effectiveMaxNum}): ${predictedNumbers.join(', ')}\nElapsed Time: ${elapsedTime} second(s)`;
+    //outputDiv.innerText = `Potential Jackpot (1-${effectiveMaxNum}): ${predictedNumbers.join(', ')}\nElapsed Time: ${elapsedTime} second(s)`;
+    outputDiv.innerText = (
+                `Potential Jackpot (1-${effectiveMaxNum}): ${predictedNumbers.join(', ')} ` +
+                `\nElapsed Time: ${elapsedTime} second(s)`);
     downloadLogs(effectiveMaxNum);
 }
 
@@ -228,7 +238,6 @@ function validateCSV(csvData, effectiveMaxNum) {
 
     for (let i = 0; i < csvData.length; i++) {
         const row = csvData[i].split(',').map(num => parseInt(num.trim(), 10));
-        logStep(`Info: row length ${row.length}`);
         if (row.length !== TOTALNUM) {
             logStep(`Error: Row ${i + 1} does not contain exactly ${TOTALNUM} numbers: ${row.join(', ')}`);
             outputDiv.innerText = `Error: Row ${i + 1} must contain exactly ${TOTALNUM} numbers.`;
@@ -238,7 +247,10 @@ function validateCSV(csvData, effectiveMaxNum) {
         const invalidNum = row.find(num => isNaN(num) || num < MINPOWER || num > effectiveMaxNum);
         if (invalidNum !== undefined) {
             logStep(`Error: Row ${i + 1} contains invalid number ${invalidNum} (max ${effectiveMaxNum})`);
-            outputDiv.innerText = `Error: Number ${invalidNum} in row ${i + 1} exceeds max ${effectiveMaxNum} or is invalid.`;
+            //outputDiv.innerText = `Error: Number ${invalidNum} in row ${i + 1} exceeds max ${effectiveMaxNum} or is invalid.`;
+			outputDiv.innerText = (
+                `Error: Number ${invalidNum} in row ${i + 1} ` +
+                `exceeds max ${effectiveMaxNum} or is invalid.`);
             downloadLogs(effectiveMaxNum);
             return false;
         }
@@ -253,31 +265,31 @@ async function processCSVandPredict(csvData, maxNum) {
     const data = csvData.map(row => row.split(',').map(num => parseInt(num.trim(), 10)));
 
     // Use a sliding window for large datasets
-	// For large datasets, limited training data to a window of the last rows
-	// TOTALROW
+    // For large datasets, limited training data to a window of the last rows
+    // TOTALROW
     const windowSize = Math.min(TOTALROW, data.length - 1); // Adjustable window
     const startIdx = Math.max(0, data.length - windowSize - 1);
     const xs = data.slice(startIdx, -1);
     const ys = data.slice(startIdx + 1);
     const normalizedXs = xs.map(row => row.map(num => num / maxNum));
     const normalizedYs = ys.map(row => row.map(num => num / maxNum));
-    logStep(`Training set: ${xs.length} input rows, ${ys.length} output rows`);
+    logStep(`Training set: ${xs.length} input rows, ${ys.length} rows`);
 
     logStep("Converting data to Tensor");
     const inputTensor = tf.tensor2d(normalizedXs);
     const outputTensor = tf.tensor2d(normalizedYs);
 
     logStep("Defining network model");
-	// Tensor Flow DNN 64-32-6 layers
+    // Tensor Flow DNN 64-32-6 layers with ReLU and linear activations.
     const model = tf.sequential();
     model.add(tf.layers.dense({ units: 64, activation: 'relu', inputShape: [6] }));
     model.add(tf.layers.dense({ units: 32, activation: 'relu' }));
     model.add(tf.layers.dense({ units: 6, activation: 'linear' }));
 	
-	// https://viblo.asia/p/danh-gia-model-trong-machine-learing-RnB5pAq7KPG
-	// https://viblo.asia/p/optimizer-hieu-sau-ve-cac-thuat-toan-toi-uu-gdsgdadam-Qbq5QQ9E5D8
-	//     Adam = Momentum + RMSprop
-	//     https://viblo.asia/p/thuat-toan-toi-uu-adam-aWj53k8Q56m	
+    // https://viblo.asia/p/danh-gia-model-trong-machine-learing-RnB5pAq7KPG
+    // https://viblo.asia/p/optimizer-hieu-sau-ve-cac-thuat-toan-toi-uu-gdsgdadam-Qbq5QQ9E5D8
+    //     Adam = Momentum + RMSprop
+    //     https://viblo.asia/p/thuat-toan-toi-uu-adam-aWj53k8Q56m	
     model.compile({
         optimizer: tf.train.adam(0.001), // Tuned learning rate for faster
         loss: 'meanSquaredError',
@@ -285,20 +297,24 @@ async function processCSVandPredict(csvData, maxNum) {
     });
     logStep("Model compiled with Adam optimizer and MSE loss");
 
-    logStep("Starting model training");
-	// Experiment:
-	// Epoch 5 - Loss: 0.0265, MAE: 0.1301, 1000 rows, 3.53 second(s)
-    // Epoch 10 - Loss: 0.0254, MAE: 0.1277, 517 rows, 8.30 second(s)
+    logStep(`Starting model training v.${VERSION}`);
+    // Experiment:
+    // Epoch 005 - Loss: 0.0265, MAE: 0.1301, 1000 rows, 3.53 second(s)
+    // Epoch 010 - Loss: 0.0254, MAE: 0.1277, 517 rows, 8.30 second(s)
     // Epoch 150 - Loss: 0.0213, MAE: 0.1170, 1000 rows, 36.91 second(s)
     // Epoch 150 - Loss: 0.0214, MAE: 0.1175, 1000 rows, 34.91 second(s)
-	// Epoch 150 - Loss: 0.0213, MAE: 0.1170, 1000 rows, 49.76 second(s)
-	// Epoch 150 - Loss: 0.0217, MAE: 0.1183, 1039 rows, 36.07 second(s)
+    // Epoch 150 - Loss: 0.0213, MAE: 0.1170, 1000 rows, 49.76 second(s)
+    // Epoch 150 - Loss: 0.0217, MAE: 0.1183, 1039 rows, 36.07 second(s)
+    //                                        1040 rows, 88.90 second(s)
+    //                                        8 rows, 10.63 second(s)
+    // Epoch 150 - Loss: 0.0277, MAE: 0.1362, 9 rows, 11.92 second(s)
+    // Epoch 150 - Loss: 0.0215, MAE: 0.1174, 1040 rows, 51.24 second(s)
     await model.fit(inputTensor, outputTensor, {
         //epochs: Math.min(150, Math.ceil(5000 / xs.length)), // Dynamic epochs, default entire 150 training set per sample
         //batchSize: 1,
-		epochs: 150,
-		batchSize: Math.min(32, xs.length),     // Larger batch size for efficiency
-        shuffle: true,
+        epochs: 150,
+        batchSize: Math.min(32, xs.length),     // Larger batch size for efficiency
+        shuffle: true,                          // preventing order bias in training data
         verbose: 0,
         callbacks: {
             onEpochEnd: (epoch, logs) => {
